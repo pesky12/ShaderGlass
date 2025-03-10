@@ -20,7 +20,61 @@ bool CaptureManager::Initialize()
 {
     m_presetList.push_back(make_unique<PassthroughPresetDef>());
     m_presetList.insert(m_presetList.begin(), RetroArchPresetList.begin(), RetroArchPresetList.end());
-    return false;
+
+    // Initialize DirectX
+    UINT createDeviceFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+#ifdef _DEBUG
+    createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
+
+    D3D_FEATURE_LEVEL featureLevels[] = {
+        D3D_FEATURE_LEVEL_11_1,
+        D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1,
+        D3D_FEATURE_LEVEL_10_0,
+    };
+    UINT         numFeatureLevels = ARRAYSIZE(featureLevels);
+    D3D_DRIVER_TYPE driverTypes[] = {
+        D3D_DRIVER_TYPE_HARDWARE,
+        D3D_DRIVER_TYPE_WARP,
+        D3D_DRIVER_TYPE_REFERENCE,
+    };
+    UINT numDriverTypes = ARRAYSIZE(driverTypes);
+
+    D3D_FEATURE_LEVEL featureLevel;
+    D3D_DRIVER_TYPE   driverType;
+
+    HRESULT hr;
+    for(UINT driverTypeIndex = 0; driverTypeIndex < numDriverTypes; driverTypeIndex++)
+    {
+        driverType = driverTypes[driverTypeIndex];
+        hr         = D3D11CreateDevice(nullptr,
+                                 driverType,
+                                 nullptr,
+                                 createDeviceFlags,
+                                 featureLevels,
+                                 numFeatureLevels,
+                                 D3D11_SDK_VERSION,
+                                 m_d3dDevice.put(),
+                                 &featureLevel,
+                                 m_context.put());
+
+        if(SUCCEEDED(hr))
+        {
+            break;
+        }
+    }
+
+    if(FAILED(hr))
+        return false;
+
+#ifdef _DEBUG
+    hr = m_d3dDevice->QueryInterface(__uuidof(ID3D11Debug), (void**)m_debug.put());
+    assert(SUCCEEDED(hr));
+#endif
+
+    m_initialized = true;
+    return true;
 }
 
 const vector<unique_ptr<PresetDef>>& CaptureManager::Presets()

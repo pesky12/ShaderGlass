@@ -63,6 +63,7 @@ public:
     void Exit();
     float FPS();
     int FindByName(const char* presetName);
+    bool IsInitialized() const { return m_initialized; }
 
 private:
     volatile bool                                     m_active {false};
@@ -76,4 +77,5 @@ private:
     std::vector<std::tuple<int, std::string, double>> m_queuedParams;
     std::vector<std::tuple<int, std::string, double>> m_lastParams;
     unsigned int                                      m_lastPreset;
+    bool                                              m_initialized = false;
 };

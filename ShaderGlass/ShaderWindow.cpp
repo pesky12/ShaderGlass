@@ -39,7 +39,7 @@ bool ShaderWindow::LoadProfile(const std::wstring& fileName)
             infile >> std::quoted(value);
             if(key == "ProfileVersion")
             {
-                if(!value.starts_with("1."))
+                if(value.substr(0, 2) != "1.")
                     return true;
             }
             else if(key == "CaptureWindow")
@@ -179,7 +179,7 @@ bool ShaderWindow::LoadProfile(const std::wstring& fileName)
                 else
                     CheckMenuItem(m_displayMenu, ID_DESKTOP_LOCKINPUTAREA, MF_UNCHECKED | MF_BYCOMMAND);
             }
-            else if(key.starts_with("Param-") && key.size() >= 9)
+            else if(key.substr(0, 6) == "Param-" && key.size() >= 9)
             {
                 try
                 {
@@ -350,24 +350,18 @@ void ShaderWindow::LoadImage()
         m_captureOptions.transparent = false;
         CheckMenuItem(m_outputWindowMenu, IDM_WINDOW_TRANSPARENT, MF_UNCHECKED | MF_BYCOMMAND);
         CheckMenuItem(m_outputWindowMenu, IDM_WINDOW_SOLID, MF_CHECKED | MF_BYCOMMAND);
+
         TryUpdateInput();
         EnableMenuItem(m_outputScaleMenu, IDM_OUTPUT_FREESCALE, MF_BYCOMMAND | MF_ENABLED);
 
-        // if we are *switching* to file mode, default pixel size and freescale
-        if(setDefaults)
-        {
-            // set starting scale to fit within current window size
-            RECT r;
-            GetClientRect(m_mainWindow, &r);
-            int defaultScale = 1;
-            if(m_captureOptions.imageWidth > 0 && m_captureOptions.imageHeight > 0)
-            {
-                defaultScale = max(1, min(r.right / m_captureOptions.imageWidth, r.bottom / m_captureOptions.imageHeight));
+        // Always match image size initially when loading a file
+        if (m_captureOptions.imageWidth > 0 && m_captureOptions.imageHeight > 0) {
+            m_captureOptions.outputScale = 1.0f;
+            m_captureOptions.freeScale = false;
+            CheckMenuItem(m_outputScaleMenu, IDM_OUTPUT_FREESCALE, MF_UNCHECKED | MF_BYCOMMAND);
+            for(const auto& p : outputScales) {
+                CheckMenuItem(m_outputScaleMenu, p.first, p.second.s == 1.0f ? MF_CHECKED : MF_UNCHECKED | MF_BYCOMMAND);
             }
-
-            m_captureOptions.outputScale = defaultScale;
-            SendMessage(m_mainWindow, WM_COMMAND, WM_PIXEL_SIZE(0), 0);
-            SetFreeScale();
         }
 
         UpdateWindowState();
@@ -722,7 +716,7 @@ void ShaderWindow::SetTransparent(bool transparent)
 
 void ShaderWindow::AdjustWindowSize(HWND hWnd)
 {
-    if(m_isBorderless)
+    if(m_isBorderless || !m_captureManager.IsActive())
         return;
 
     // resize client area to captured window/file x scale
@@ -792,6 +786,9 @@ void ShaderWindow::AdjustWindowSize(HWND hWnd)
 
 void ShaderWindow::UpdateWindowState()
 {
+    if(!m_captureManager.IsActive())
+        return;
+        
     // always topmost when processing
     if(m_captureManager.IsActive())
         SetWindowPos(m_mainWindow, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -950,6 +947,22 @@ LRESULT CALLBACK ShaderWindow::WndProc(HWND hWnd, UINT message, WPARAM wParam, L
             break;
         case ID_INPUT_FILE:
             LoadImage();
+            break;
+        case ID_INPUT_MATCH_SIZE:
+            if (m_captureOptions.imageFile.empty()) {
+                break;
+            }
+            // Reset to 1:1 scale if we have an image loaded
+            if (m_captureOptions.imageWidth > 0 && m_captureOptions.imageHeight > 0) {
+                m_captureOptions.outputScale = 1.0f;
+                m_captureOptions.freeScale = false;
+                CheckMenuItem(m_outputScaleMenu, IDM_OUTPUT_FREESCALE, MF_UNCHECKED | MF_BYCOMMAND);
+                for(const auto& p : outputScales) {
+                    CheckMenuItem(m_outputScaleMenu, p.first, p.second.s == 1.0f ? MF_CHECKED : MF_UNCHECKED | MF_BYCOMMAND);
+                }
+                m_captureManager.UpdateOutputSize();
+                UpdateWindowState();
+            }
             break;
         case ID_PROCESSING_GLOBALHOTKEYS:
             if(GetMenuState(m_programMenu, ID_PROCESSING_GLOBALHOTKEYS, MF_BYCOMMAND) & MF_CHECKED)

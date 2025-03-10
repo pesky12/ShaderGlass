@@ -2,6 +2,9 @@
 #include "ShaderGlass.h"
 #include "ShaderList.h"
 #include "resource.h"
+#include <tuple>
+
+using std::get;
 
 static HRESULT hr;
 static const float background_colour[4] = {0, 0, 0, 1.0f};
@@ -292,7 +295,10 @@ void ShaderGlass::DestroyPasses()
 {
     for(auto& rs : m_passResources)
     {
-        if(rs.first.starts_with("PassOutput") || rs.first.starts_with("PassFeedback"))
+        const auto& key = rs.first;
+        // Check string prefixes without using starts_with
+        if(key.size() >= 10 && key.substr(0, 10) == "PassOutput" || 
+           key.size() >= 12 && key.substr(0, 12) == "PassFeedback")
         {
             rs.second = nullptr;
         }
@@ -491,9 +497,9 @@ void ShaderGlass::Process(winrt::com_ptr<ID3D11Texture2D> texture)
             {
                 for(const auto& sp : shaderParams)
                 {
-                    if(get<0>(ip) == get<0>(sp) && get<1>(ip) == get<1>(sp)->name)
+                    if(std::get<0>(ip) == std::get<0>(sp) && std::get<1>(ip) == std::get<1>(sp)->name)
                     {
-                        get<1>(sp)->currentValue = get<2>(ip);
+                        std::get<1>(sp)->currentValue = std::get<2>(ip);
                         break;
                     }
                 }
@@ -879,16 +885,34 @@ void ShaderGlass::Process(winrt::com_ptr<ID3D11Texture2D> texture)
             auto lastPassFeedback = m_passResources.find(std::string("PassFeedback") + std::to_string(p));
             winrt::com_ptr<ID3D11Resource> lastPassFeedbackResource;
             lastPassFeedback->second->GetResource(lastPassFeedbackResource.put());
+            
             if(m_boxX != 0 || m_boxY != 0)
             {
+                // Validate box dimensions
+                D3D11_TEXTURE2D_DESC srcDesc;
+                displayTexture->GetDesc(&srcDesc);
+                
                 D3D11_BOX srcBox;
-                srcBox.left = m_boxX;
-                srcBox.right = srcBox.left + lastPass.m_destWidth;
-                srcBox.top = m_boxY;
-                srcBox.bottom = srcBox.top + lastPass.m_destHeight;
-                srcBox.back = 1;
+                srcBox.left = static_cast<UINT>(max(0, m_boxX));
+                srcBox.right = min(srcDesc.Width, static_cast<UINT>(m_boxX + lastPass.m_destWidth));
+                srcBox.top = static_cast<UINT>(max(0, m_boxY)); 
+                srcBox.bottom = min(srcDesc.Height, static_cast<UINT>(m_boxY + lastPass.m_destHeight));
                 srcBox.front = 0;
-                m_context->CopySubresourceRegion(lastPassFeedbackResource.get(), 0, 0, 0, 0, displayTexture.get(), 0, &srcBox);
+                srcBox.back = 1;
+
+                // Only copy if we have valid coordinates and matching formats
+                if(srcBox.right > srcBox.left && srcBox.bottom > srcBox.top)
+                {
+                    D3D11_TEXTURE2D_DESC destDesc;
+                    winrt::com_ptr<ID3D11Texture2D> feedbackTexture;
+                    lastPassFeedbackResource.as(feedbackTexture);
+                    feedbackTexture->GetDesc(&destDesc);
+                    
+                    if(srcDesc.Format == destDesc.Format)
+                    {
+                        m_context->CopySubresourceRegion(lastPassFeedbackResource.get(), 0, 0, 0, 0, displayTexture.get(), 0, &srcBox);
+                    }
+                }
             }
             else
             {
@@ -939,7 +963,7 @@ void ShaderGlass::Process(winrt::com_ptr<ID3D11Texture2D> texture)
 
 winrt::com_ptr<ID3D11Texture2D> ShaderGlass::GrabOutput()
 {
-    auto                            displayTexture = m_displayTexture;
+    auto displayTexture = m_displayTexture;
     winrt::com_ptr<ID3D11Texture2D> outputTexture;
 
     if(displayTexture)
@@ -955,38 +979,39 @@ winrt::com_ptr<ID3D11Texture2D> ShaderGlass::GrabOutput()
         if(m_shaderPasses.size() && (m_boxX != 0 || m_boxY != 0))
         {
             const auto& lastPass = m_shaderPasses.rbegin();
-            desc2.Width          = lastPass->m_destWidth;
-            desc2.Height         = lastPass->m_destHeight;
-            hr                   = m_device->CreateTexture2D(&desc2, nullptr, outputTexture.put());
-            assert(SUCCEEDED(hr));
+            
+            // Ensure dimensions are positive and within bounds
+            UINT width = min(lastPass->m_destWidth, displayWidth);
+            UINT height = min(lastPass->m_destHeight, displayHeight);
+            
+            if(width > 0 && height > 0)
+            {
+                desc2.Width = width;
+                desc2.Height = height;
+                hr = m_device->CreateTexture2D(&desc2, nullptr, outputTexture.put());
+                assert(SUCCEEDED(hr));
 
-            D3D11_BOX srcBox;
-            srcBox.left   = m_boxX;
-            srcBox.right  = srcBox.left + lastPass->m_destWidth;
-            srcBox.top    = m_boxY;
-            srcBox.bottom = srcBox.top + lastPass->m_destHeight;
-            srcBox.back   = 1;
-            srcBox.front  = 0;
-            // fractions :/
-            if(srcBox.right > displayWidth)
-            {
-                auto adj = srcBox.right - displayWidth;
-                srcBox.left -= adj;
-                srcBox.right -= adj;
+                // Validate copy region against source texture bounds
+                D3D11_BOX srcBox;
+                srcBox.left = static_cast<UINT>(max(0, m_boxX));
+                srcBox.right = min(displayWidth, srcBox.left + width);
+                srcBox.top = static_cast<UINT>(max(0, m_boxY));
+                srcBox.bottom = min(displayHeight, srcBox.top + height);
+                srcBox.front = 0;
+                srcBox.back = 1;
+
+                // Only copy if we have a valid region
+                if(srcBox.right > srcBox.left && srcBox.bottom > srcBox.top)
+                {
+                    m_context->CopySubresourceRegion(outputTexture.get(), 0, 0, 0, 0, displayTexture.get(), 0, &srcBox);
+                }
             }
-            if(srcBox.bottom > displayHeight)
-            {
-                auto adj = srcBox.bottom - displayHeight;
-                srcBox.top -= adj;
-                srcBox.bottom -= adj;
-            }
-            m_context->CopySubresourceRegion(outputTexture.get(), 0, 0, 0, 0, displayTexture.get(), 0, &srcBox);
         }
         else
         {
+            // Full texture copy
             hr = m_device->CreateTexture2D(&desc2, nullptr, outputTexture.put());
             assert(SUCCEEDED(hr));
-
             m_context->CopyResource(outputTexture.get(), displayTexture.get());
         }
     }
